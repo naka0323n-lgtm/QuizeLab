@@ -1,32 +1,33 @@
-name: Windows installer
+name: Windows builds
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ["v*"]
 permissions:
   contents: read
 jobs:
   build:
+    name: Windows ${{ matrix.target }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [portable, nsis]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run build:win
+      - name: Build Windows application
+        run: npx --no-install electron-builder --win ${{ matrix.target }} --x64
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - run: npm run build:portable
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - uses: actions/upload-artifact@v4
         with:
-          name: QuizeLab-Windows-x64
-          path: |
-            dist/QuizeLab-Setup-*.exe
-            dist/QuizeLab-Portable-*.exe
+          name: QuizeLab-Windows-${{ matrix.target }}
+          path: dist/QuizeLab-*.exe
           if-no-files-found: error
