@@ -329,7 +329,7 @@ test("旧版SQLiteから問題集・過去の正解回数を移行してバッ�
       assert.equal(items[0].streak, 1);
       assert.equal((await request("collections")).value.length, 1);
       assert.equal(existsSync(filename + ".before-v2.bak"), true);
-      assert.equal((await request("attempts")).value.length, 3);
+      assert.equal((await request("attempts")).value.length, 4);
     },
     (database) => {
       database.exec(`CREATE TABLE questions(id INTEGER PRIMARY KEY,title TEXT NOT NULL,category TEXT NOT NULL,options TEXT NOT NULL,answer INTEGER NOT NULL,explanation TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -354,5 +354,12 @@ test("旧版SQLiteから問題集・過去の正解回数を移行してバッ�
             "INSERT INTO attempts(questions,answers,score,total) VALUES(?,?,?,1)",
           )
           .run(snapshot, JSON.stringify([answer]), answer === 0 ? 1 : 0);
+      const unrelated = JSON.parse(snapshot);
+      unrelated[0].title = "削除済みの別問題";
+      database
+        .prepare(
+          "INSERT INTO attempts(questions,answers,score,total) VALUES(?,?,1,1)",
+        )
+        .run(JSON.stringify(unrelated), "[0]");
     },
   ));

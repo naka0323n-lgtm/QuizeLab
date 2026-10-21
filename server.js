@@ -25,7 +25,11 @@ function transaction(fn) {
 // Keep the old tables and migrate in one transaction. Back up the checkpointed DB first.
 if (db.prepare("PRAGMA user_version").get().user_version < 2) {
   if (existing) {
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    const checkpoint = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    if (checkpoint.busy)
+      throw Error(
+        "旧版の QuizeLab を完全に終了してから、もう一度起動してください",
+      );
     const backup = dbPath + ".before-v2.bak";
     if (!existsSync(backup)) copyFileSync(dbPath, backup);
   }
@@ -79,6 +83,18 @@ if (db.prepare("PRAGMA user_version").get().user_version < 2) {
       const items = JSON.parse(attempt.questions),
         answers = JSON.parse(attempt.answers);
       items.forEach((q, i) => {
+        const current = db
+          .prepare("SELECT title,options,answer FROM questions WHERE id=?")
+          .get(q.id);
+        // Old IDs can be reused after deletion. Do not inherit another question's results.
+        if (
+          !current ||
+          current.title !== q.title ||
+          current.answer !== q.answer ||
+          JSON.stringify(JSON.parse(current.options)) !==
+            JSON.stringify(q.options)
+        )
+          return;
         const correct = answers[i] === q.answer;
         db.prepare(
           "UPDATE questions SET answer_count=answer_count+?, correct_count=correct_count+?, streak=CASE WHEN ? THEN streak+1 ELSE 0 END WHERE id=?",
