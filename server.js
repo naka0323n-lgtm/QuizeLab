@@ -8,6 +8,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.DB_PATH || join(root, 'data', 'quizelab.sqlite');
 mkdirSync(dirname(dbPath), { recursive: true });
 const db = new DatabaseSync(dbPath);
+export const closeDatabase = () => db.close();
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL, options TEXT NOT NULL, answer INTEGER NOT NULL, explanation TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS attempts (id INTEGER PRIMARY KEY, questions TEXT NOT NULL, answers TEXT NOT NULL, score INTEGER NOT NULL, total INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);

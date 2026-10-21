@@ -2,7 +2,71 @@
   "name": "quizelab",
   "version": "1.0.0",
   "private": true,
+  "description": "選択問題の作成・管理と試験形式の学習ができるローカルアプリ",
+  "author": "QuizeLab",
+  "main": "desktop/main.cjs",
   "type": "module",
-  "engines": { "node": ">=24" },
-  "scripts": { "start": "node server.js", "dev": "node --watch server.js", "test": "node --test" }
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "start:web": "node server.js",
+    "dev:web": "node --watch server.js",
+    "test": "node --test",
+    "build:win": "electron-builder --win nsis --x64",
+    "build:dir": "electron-builder --dir",
+    "build:portable": "electron-builder --win portable --x64"
+  },
+  "build": {
+    "appId": "jp.quizelab.desktop",
+    "productName": "QuizeLab",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop/**/*",
+      "server.js",
+      "public/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "QuizeLab-Setup-${version}-${arch}.${ext}",
+      "icon": "build/icon.ico",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "ja_JP",
+        "en_US"
+      ],
+      "language": "1041"
+    },
+    "toolsets": {
+      "wine": "1.0.1"
+    },
+    "portable": {
+      "artifactName": "QuizeLab-Portable-${version}-${arch}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.15.3"
+  }
 }
