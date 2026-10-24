@@ -346,12 +346,87 @@ function collectionEditor(node, kind = "deck") {
       }
     };
 }
+function questionImage(q) {
+  return q.image_id
+    ? `<figure class="question-image"><button type="button" data-image="${esc(q.image_id)}" aria-label="問題の画像を拡大"><img src="/api/images/${esc(q.image_id)}" alt="問題の添付画像"></button><figcaption>クリックして拡大</figcaption></figure>`
+    : "";
+}
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-image]");
+  if (!button) return;
+  const { dialog } = modal(
+    `<div class="modal-heading"><h2>問題の画像</h2><button type="button" class="icon-button" data-close aria-label="閉じる">×</button></div><img src="/api/images/${esc(button.dataset.image)}" alt="問題の添付画像（拡大）">`,
+  );
+  dialog.classList.add("image-viewer");
+});
 function editor(q) {
   const decks = nodes.filter((n) => n.kind === "deck");
   const chosenTags = new Set(q?.tags || []);
+  let imageValue = q?.image_id || null,
+    imageReading = false,
+    imageToken = 0;
   const { dialog, close } = modal(
-    `<form id="question-form"><div class="modal-heading"><div><span class="eyebrow">QUESTION EDITOR</span><h2>${q ? "問題を編集" : "問題集に問題を追加"}</h2></div><button type="button" class="icon-button" data-close aria-label="閉じる">×</button></div><label class="field">保存先の問題集<select name="deck" required>${decks.map((d) => `<option value="${d.id}" ${(q?.deck_id ?? activeId) === d.id ? "selected" : ""}>${esc(pathFor(d))}</option>`).join("")}</select></label><label class="field">問題文<textarea name="title" required maxlength="10000" rows="4" placeholder="ここに問題文を入力してください">${esc(q?.title || "")}</textarea></label><div class="field">選択肢<small>正解の選択肢にチェックしてください（単一選択）</small><div id="options"></div><button type="button" class="text-button" id="add-option">＋ 選択肢を追加</button></div><label class="field">解説 <span class="optional">任意</span><textarea name="explanation" maxlength="10000" rows="3" placeholder="正解の理由、覚えておきたいポイント">${esc(q?.explanation || "")}</textarea></label><div class="field">タグ <span class="optional">任意</span><small>登録済みのタグは、クリックで付け外しできます。</small><div class="tag-input"><input id="new-tag" maxlength="50" placeholder="新しいタグを入力"><button class="secondary" type="button" id="add-tag">追加</button></div><div id="tag-choices" class="tag-choices"></div></div>${q ? '<p class="edit-note">問題文・選択肢・正解を変更すると、この問題の学習カウントをリセットします。タグ・解説・保存先の変更では維持します。</p>' : ""}<p id="form-error" role="alert"></p><div class="modal-footer">${q ? '<div class="question-danger-actions"><button type="button" class="danger" id="delete">問題を削除</button><button type="button" class="text-button" id="reset-progress">学習カウントをリセット</button></div>' : "<span></span>"}<div><button type="button" class="secondary" data-close>キャンセル</button><button class="primary" type="submit">${q ? "変更を保存" : "問題を保存"}</button></div></div></form>`,
+    `<form id="question-form"><div class="modal-heading"><div><span class="eyebrow">QUESTION EDITOR</span><h2>${q ? "問題を編集" : "問題集に問題を追加"}</h2></div><button type="button" class="icon-button" data-close aria-label="閉じる">×</button></div><label class="field">保存先の問題集<select name="deck" required>${decks.map((d) => `<option value="${d.id}" ${(q?.deck_id ?? activeId) === d.id ? "selected" : ""}>${esc(pathFor(d))}</option>`).join("")}</select></label><label class="field">問題文<textarea name="title" required maxlength="10000" rows="4" placeholder="ここに問題文を入力してください">${esc(q?.title || "")}</textarea></label><div class="field">問題の画像 <span class="optional">任意・1枚</span><small>PNG・JPEG・WebP、5MB以下。クリックで拡大できます。</small><input type="file" id="question-image-file" accept="image/png,image/jpeg,image/webp" aria-label="問題の画像を選択"><div id="image-preview"></div><button type="button" class="text-button" id="remove-image">画像を外す</button><p id="image-error" role="alert"></p></div><div class="field">選択肢<small>正解の選択肢にチェックしてください（単一選択）</small><div id="options"></div><button type="button" class="text-button" id="add-option">＋ 選択肢を追加</button></div><label class="field">解説 <span class="optional">任意</span><textarea name="explanation" maxlength="10000" rows="3" placeholder="正解の理由、覚えておきたいポイント">${esc(q?.explanation || "")}</textarea></label><div class="field">タグ <span class="optional">任意</span><small>登録済みのタグは、クリックで付け外しできます。</small><div class="tag-input"><input id="new-tag" maxlength="50" placeholder="新しいタグを入力"><button class="secondary" type="button" id="add-tag">追加</button></div><div id="tag-choices" class="tag-choices"></div></div>${q ? '<p class="edit-note">問題文・画像・選択肢・正解を変更すると、この問題の学習カウントをリセットします。タグ・解説・保存先の変更では維持します。</p>' : ""}<p id="form-error" role="alert"></p><div class="modal-footer">${q ? '<div class="question-danger-actions"><button type="button" class="danger" id="delete">問題を削除</button><button type="button" class="text-button" id="reset-progress">学習カウントをリセット</button></div>' : "<span></span>"}<div><button type="button" class="secondary" data-close>キャンセル</button><button class="primary" type="submit">${q ? "変更を保存" : "問題を保存"}</button></div></div></form>`,
   );
+  function drawImage() {
+    $("#image-preview").innerHTML = imageValue
+      ? `<img src="${esc(typeof imageValue === "string" ? "/api/images/" + imageValue : imageValue.data_url)}" alt="添付画像のプレビュー">`
+      : "";
+    $("#remove-image").hidden = !imageValue;
+  }
+  drawImage();
+  $("#remove-image").onclick = () => {
+    imageToken++;
+    imageReading = false;
+    imageValue = null;
+    $("#question-image-file").value = "";
+    $("#image-error").textContent = "";
+    dialog.querySelector("[type=submit]").disabled = false;
+    drawImage();
+  };
+  $("#question-image-file").onchange = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const token = ++imageToken;
+    imageReading = true;
+    dialog.querySelector("[type=submit]").disabled = true;
+    $("#image-error").textContent = "";
+    try {
+      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type))
+        throw Error("PNG・JPEG・WebP を選んでください");
+      if (file.size > 5 * 1024 * 1024)
+        throw Error("画像は5MB以下にしてください");
+      const dataURL = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(Error("画像を読み込めませんでした"));
+        reader.readAsDataURL(file);
+      });
+      const image = new Image();
+      image.src = dataURL;
+      await image.decode();
+      if (
+        image.width > 10000 ||
+        image.height > 10000 ||
+        image.width * image.height > 25000000
+      )
+        throw Error("画像は縦横10000px以下、2500万画素以下にしてください");
+      if (token !== imageToken || !dialog.isConnected) return;
+      imageValue = { data_url: dataURL };
+      drawImage();
+    } catch (error) {
+      if (token === imageToken && dialog.isConnected) {
+        $("#image-error").textContent =
+          error.message || "画像を読み込めませんでした";
+        $("#question-image-file").value = "";
+      }
+    } finally {
+      if (token === imageToken && dialog.isConnected) {
+        imageReading = false;
+        dialog.querySelector("[type=submit]").disabled = false;
+      }
+    }
+  };
   let available = [...new Set([...tags, ...chosenTags])];
   function drawTags() {
     $("#tag-choices").innerHTML =
@@ -410,6 +485,7 @@ function editor(q) {
   };
   $("#question-form").onsubmit = async (e) => {
     e.preventDefault();
+    if (imageReading) return;
     const form = e.target;
     const rows = [...dialog.querySelectorAll(".option-edit")],
       button = form.querySelector("[type=submit]");
@@ -420,6 +496,7 @@ function editor(q) {
         title: form.elements.title.value,
         explanation: form.elements.explanation.value,
         tags: [...chosenTags],
+        image: imageValue,
         options: rows.map((r) => r.querySelector(".option-text").value),
         answer: rows.findIndex((r) => r.querySelector("[type=radio]").checked),
       };
@@ -428,7 +505,8 @@ function editor(q) {
         (q.title !== payload.title.trim() ||
           JSON.stringify(q.options) !==
             JSON.stringify(payload.options.map((v) => v.trim())) ||
-          q.answer !== payload.answer) &&
+          q.answer !== payload.answer ||
+          imageValue !== (q.image_id || null)) &&
         q.answer_count &&
         !confirm(
           "問題の内容を変更すると学習カウントがリセットされます。保存しますか？",
@@ -512,7 +590,7 @@ function renderExam() {
   const q = exam.items[exam.index],
     answered = exam.answers.filter((a) => a !== null).length;
   $("#app").innerHTML =
-    `<div class="exam"><header class="exam-header"><span class="exam-brand">Q <b>QuizeLab</b><small>確認テスト</small></span><span>経過時間 <b id="clock">00:00</b></span><button class="secondary" id="quit">テストを中断</button></header><div class="exam-layout"><section class="exam-paper"><div class="exam-meta"><span>問 ${exam.index + 1} <small>/ ${exam.items.length}</small></span><span>${esc(q.category)}</span></div><h1 class="exam-question">${esc(q.title)}</h1><p class="answer-instruction">最も適切なものを1つ選んでください。</p><div class="exam-options">${q.options.map((o, i) => `<label class="exam-option ${exam.answers[exam.index] === i ? "chosen" : ""}"><input type="radio" name="exam-answer" value="${i}" ${exam.answers[exam.index] === i ? "checked" : ""}><span>${letters[i]}</span><div>${esc(o)}</div></label>`).join("")}</div><div class="exam-controls"><button class="secondary" id="prev" ${exam.index === 0 ? "disabled" : ""}>← 前の問題</button><button class="text-button" id="flag">${exam.flags.includes(exam.index) ? "◆ 見直しを解除" : "◇ あとで見直す"}</button><button class="primary" id="next">${exam.index === exam.items.length - 1 ? "解答を提出" : "次の問題 →"}</button></div></section><aside class="exam-nav"><h3>解答状況</h3><p>${answered} / ${exam.items.length} 問 解答済み</p><progress value="${answered}" max="${exam.items.length}"></progress><div class="number-grid">${exam.items.map((_, i) => `<button data-jump="${i}" class="${i === exam.index ? "current" : ""} ${exam.answers[i] !== null ? "answered" : ""}">${i + 1}${exam.flags.includes(i) ? "<sup>◆</sup>" : ""}</button>`).join("")}</div><small>◆ あとで見直す問題</small><button id="submit" class="secondary">テストを終了・採点</button><p class="muted">解答は提出するまで変更できます。未解答の問題は不正解になります。</p><p id="exam-error" role="alert"></p></aside></div></div>`;
+    `<div class="exam"><header class="exam-header"><span class="exam-brand">Q <b>QuizeLab</b><small>確認テスト</small></span><span>経過時間 <b id="clock">00:00</b></span><button class="secondary" id="quit">テストを中断</button></header><div class="exam-layout"><section class="exam-paper"><div class="exam-meta"><span>問 ${exam.index + 1} <small>/ ${exam.items.length}</small></span><span>${esc(q.category)}</span></div><h1 class="exam-question">${esc(q.title)}</h1>${questionImage(q)}<p class="answer-instruction">最も適切なものを1つ選んでください。</p><div class="exam-options">${q.options.map((o, i) => `<label class="exam-option ${exam.answers[exam.index] === i ? "chosen" : ""}"><input type="radio" name="exam-answer" value="${i}" ${exam.answers[exam.index] === i ? "checked" : ""}><span>${letters[i]}</span><div>${esc(o)}</div></label>`).join("")}</div><div class="exam-controls"><button class="secondary" id="prev" ${exam.index === 0 ? "disabled" : ""}>← 前の問題</button><button class="text-button" id="flag">${exam.flags.includes(exam.index) ? "◆ 見直しを解除" : "◇ あとで見直す"}</button><button class="primary" id="next">${exam.index === exam.items.length - 1 ? "解答を提出" : "次の問題 →"}</button></div></section><aside class="exam-nav"><h3>解答状況</h3><p>${answered} / ${exam.items.length} 問 解答済み</p><progress value="${answered}" max="${exam.items.length}"></progress><div class="number-grid">${exam.items.map((_, i) => `<button data-jump="${i}" class="${i === exam.index ? "current" : ""} ${exam.answers[i] !== null ? "answered" : ""}">${i + 1}${exam.flags.includes(i) ? "<sup>◆</sup>" : ""}</button>`).join("")}</div><small>◆ あとで見直す問題</small><button id="submit" class="secondary">テストを終了・採点</button><p class="muted">解答は提出するまで変更できます。未解答の問題は不正解になります。</p><p id="exam-error" role="alert"></p></aside></div></div>`;
   updateClock();
   document.querySelectorAll('[name="exam-answer"]').forEach(
     (r) =>
@@ -593,7 +671,7 @@ async function submit() {
 function renderResult() {
   const r = result;
   $("#app").innerHTML =
-    `<div class="results"><div class="eyebrow">SESSION COMPLETE</div><h1>テスト結果</h1><p>おつかれさまでした。解説を読んで、理解を深めましょう。</p><div class="score"><strong>${Math.round((r.score / r.total) * 100)}<small>%</small></strong><span>正答率 · ${r.total} 問中 ${r.score} 問正解</span></div><div class="result-actions"><button class="secondary" id="home">問題集に戻る</button><button class="primary" id="retry" ${r.score === r.total ? "disabled" : ""}>間違えた問題をもう一度</button></div>${r.questions.map((q, i) => `<article class="review"><div class="review-heading"><span class="${q.answer === r.answers[i] ? "correct" : "incorrect"}">${q.answer === r.answers[i] ? "✓ 正解" : "× 不正解"}</span><span>問 ${i + 1} · ${esc(q.category)}</span></div><h3>${esc(q.title)}</h3><div class="result-progress">${q.mastered ? "✓ 習得済み" : "習得まで"} · ${q.mastery_mode === "streak" ? "連続" : "累計"} ${q.progress_count} / ${q.mastery_target} 回正解</div>${q.options.map((o, j) => `<div class="review-option ${j === q.answer ? "right" : ""}"><b>${letters[j]}</b> ${esc(o)} ${j === q.answer ? "<small>正解</small>" : j === r.answers[i] ? "<small>あなたの解答</small>" : ""}</div>`).join("")}${r.answers[i] === null ? '<p class="incorrect">未解答</p>' : ""}<div class="explanation"><b>解説</b><p>${esc(q.explanation || "解説はまだ登録されていません。")}</p></div></article>`).join("")}</div>`;
+    `<div class="results"><div class="eyebrow">SESSION COMPLETE</div><h1>テスト結果</h1><p>おつかれさまでした。解説を読んで、理解を深めましょう。</p><div class="score"><strong>${Math.round((r.score / r.total) * 100)}<small>%</small></strong><span>正答率 · ${r.total} 問中 ${r.score} 問正解</span></div><div class="result-actions"><button class="secondary" id="home">問題集に戻る</button><button class="primary" id="retry" ${r.score === r.total ? "disabled" : ""}>間違えた問題をもう一度</button></div>${r.questions.map((q, i) => `<article class="review"><div class="review-heading"><span class="${q.answer === r.answers[i] ? "correct" : "incorrect"}">${q.answer === r.answers[i] ? "✓ 正解" : "× 不正解"}</span><span>問 ${i + 1} · ${esc(q.category)}</span></div><h3>${esc(q.title)}</h3>${questionImage(q)}<div class="result-progress">${q.mastered ? "✓ 習得済み" : "習得まで"} · ${q.mastery_mode === "streak" ? "連続" : "累計"} ${q.progress_count} / ${q.mastery_target} 回正解</div>${q.options.map((o, j) => `<div class="review-option ${j === q.answer ? "right" : ""}"><b>${letters[j]}</b> ${esc(o)} ${j === q.answer ? "<small>正解</small>" : j === r.answers[i] ? "<small>あなたの解答</small>" : ""}</div>`).join("")}${r.answers[i] === null ? '<p class="incorrect">未解答</p>' : ""}<div class="explanation"><b>解説</b><p>${esc(q.explanation || "解説はまだ登録されていません。")}</p></div></article>`).join("")}</div>`;
   $("#home").onclick = () => {
     result = null;
     render();

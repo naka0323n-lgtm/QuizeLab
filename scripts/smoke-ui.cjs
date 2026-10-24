@@ -53,6 +53,20 @@ const assert = require("node:assert/strict");
     await page
       .locator("[name=explanation]")
       .fill("TLS を使用する HTTPS が正解です。");
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII=",
+      "base64",
+    );
+    await page
+      .locator("#question-image-file")
+      .setInputFiles({
+        name: "question.png",
+        mimeType: "image/png",
+        buffer: png,
+      });
+    await page.waitForFunction(
+      () => document.querySelector("#image-preview img")?.naturalWidth > 0,
+    );
     await page.locator("#new-tag").fill("重要");
     await page.locator("#add-tag").click();
     await page.getByRole("button", { name: "問題を保存", exact: true }).click();
@@ -82,6 +96,12 @@ const assert = require("node:assert/strict");
       await page.locator(".exam-option").first().click();
       await page.locator("#submit").click();
       await page.locator(".score").waitFor();
+      const picture = page.locator(".review .question-image img");
+      assert.equal(await picture.count(), 1);
+      await picture.evaluate((img) => img.decode());
+      await page.locator("[data-image]").click();
+      await page.locator(".image-viewer img").evaluate((img) => img.decode());
+      await page.locator(".image-viewer [data-close]").click();
       assert.match(await page.locator(".score").innerText(), /100%/);
       await page.locator("#home").click();
     }
@@ -132,6 +152,19 @@ const assert = require("node:assert/strict");
     );
     await page.locator("[data-view=history]").click();
     assert.equal(await page.locator(".history-row").count(), 5);
+    await page.locator("[data-node]").last().click();
+    await page.locator("[data-status=all]").click();
+    const row = page
+      .locator(".question-row")
+      .filter({ hasText: "通信を暗号化" });
+    await row.locator("[data-edit]").click();
+    await page.locator("#image-preview img").evaluate((img) => img.decode());
+    await page.locator("#remove-image").click();
+    await page.getByRole("button", { name: "変更を保存", exact: true }).click();
+    await page.locator("dialog").waitFor({ state: "detached" });
+    await row.locator("[data-edit]").click();
+    assert.equal(await page.locator("#image-preview img").count(), 0);
+    await page.locator("dialog [data-close]").first().click();
     assert.deepEqual(errors, []);
     console.log(
       "PASS UI: hierarchical decks, click-to-reuse tags, selection settings, five rounds, mastery exclusion/review/reset, deck stats, history, mobile",

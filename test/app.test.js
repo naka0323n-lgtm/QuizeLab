@@ -189,7 +189,7 @@ async function withServer(fn, seed) {
       });
       return { status: response.status, value: await response.json() };
     };
-    await fn(request, filename);
+    await fn(request, filename, base);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = once(child, "exit");
@@ -361,5 +361,118 @@ test("旧版SQLiteから問題集・過去の正解回数を移行してバッ�
           "INSERT INTO attempts(questions,answers,score,total) VALUES(?,?,1,1)",
         )
         .run(JSON.stringify(unrelated), "[0]");
+    },
+  ));
+
+const imagePNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII=";
+test("画像の保存・参照・差替え・除去と過去画像の保持、形式・サイズ検証", () =>
+  withServer(async (request, filename, base) => {
+    const deck = (
+      await request("collections", "POST", { name: "画像問題集", kind: "deck" })
+    ).value.id;
+    const q = {
+      title: "図を見て答えよ",
+      deck_id: deck,
+      options: ["正解", "不正解"],
+      answer: 0,
+      tags: [],
+      image: { data_url: "data:image/png;base64," + imagePNG },
+    };
+    const created = await request("questions", "POST", q);
+    assert.equal(created.status, 201);
+    const id = created.value.id;
+    let item = (await request("questions")).value[0];
+    const imageId = item.image_id;
+    assert.match(imageId, /^[a-f0-9]{64}$/);
+    const response = await fetch(base + "/api/images/" + imageId);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.deepEqual(
+      Buffer.from(await response.arrayBuffer()),
+      Buffer.from(imagePNG, "base64"),
+    );
+    const attempt = await request("attempts", "POST", {
+      ids: [id],
+      answers: [0],
+    });
+    assert.equal(attempt.value.questions[0].image_id, imageId);
+    await request("questions/" + id, "PUT", {
+      ...q,
+      image: imageId,
+      explanation: "解説変更",
+    });
+    assert.equal((await request("questions")).value[0].correct_count, 1);
+    const { image, ...withoutImage } = q;
+    await request("questions/" + id, "PUT", withoutImage);
+    assert.equal((await request("questions")).value[0].image_id, imageId);
+    const invalid = await request("questions", "POST", {
+      ...q,
+      image: {
+        data_url:
+          "data:image/png;base64," +
+          Buffer.from("<html>invalid</html>").toString("base64"),
+      },
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(
+      (
+        await request("questions", "POST", {
+          ...q,
+          image: { data_url: "data:image/svg+xml;base64,PHN2Zy8+" },
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await request("questions", "POST", {
+          ...q,
+          image: {
+            data_url:
+              "data:image/png;base64," +
+              Buffer.alloc(5 * 1024 * 1024 + 1).toString("base64"),
+          },
+        })
+      ).status,
+      400,
+    );
+    await request("questions/" + id, "PUT", { ...q, image: null });
+    item = (await request("questions")).value[0];
+    assert.equal(item.image_id, null);
+    assert.equal(item.correct_count, 0);
+    assert.equal((await fetch(base + "/api/images/" + imageId)).status, 200);
+    assert.equal(
+      (await fetch(base + "/api/images/" + "0".repeat(64))).status,
+      404,
+    );
+    const database = new DatabaseSync(filename);
+    assert.equal(database.prepare("SELECT count(*) n FROM images").get().n, 1);
+    assert.deepEqual(
+      Buffer.from(
+        database.prepare("SELECT data FROM images WHERE id=?").get(imageId)
+          .data,
+      ),
+      Buffer.from(imagePNG, "base64"),
+    );
+    database.close();
+  }));
+
+test("v1.1 の習得済みデータを画像対応へ移行しても学習回数を維持する", () =>
+  withServer(
+    async (request, filename) => {
+      const q = (await request("questions")).value[0];
+      assert.equal(q.correct_count, 5);
+      assert.equal(q.answer_count, 7);
+      assert.equal(q.mastered, true);
+      assert.equal(q.image_id, null);
+      assert.equal(existsSync(filename + ".before-images.bak"), true);
+    },
+    (database) => {
+      database.exec(`CREATE TABLE collections(id INTEGER PRIMARY KEY,name TEXT,kind TEXT,parent_id INTEGER,mastery_target INTEGER,mastery_mode TEXT);
+  INSERT INTO collections VALUES(1,'既存問題集','deck',NULL,5,'total');
+  CREATE TABLE questions(id INTEGER PRIMARY KEY,title TEXT,category TEXT,options TEXT,answer INTEGER,explanation TEXT,created_at TEXT,deck_id INTEGER,tags TEXT,answer_count INTEGER,correct_count INTEGER,streak INTEGER);
+  INSERT INTO questions VALUES(1,'既存問題','既存問題集','["正解","不正解"]',0,'','2026-10-21',1,'[]',7,5,2);
+  CREATE TABLE attempts(id INTEGER PRIMARY KEY,questions TEXT,answers TEXT,score INTEGER,total INTEGER,created_at TEXT,submission_key TEXT);
+  PRAGMA user_version=2;`);
     },
   ));

@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync, copyFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -108,6 +109,81 @@ if (db.prepare("PRAGMA user_version").get().user_version < 2) {
     }
     db.exec("PRAGMA user_version=2");
   });
+}
+// Images are stored in the same SQLite file, so existing backup procedures keep them.
+if (db.prepare("PRAGMA user_version").get().user_version < 3) {
+  if (existing) {
+    if (db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get().busy)
+      throw Error("QuizeLab を完全に終了してから更新してください");
+    const backup = dbPath + ".before-images.bak";
+    if (!existsSync(backup)) copyFileSync(dbPath, backup);
+  }
+  transaction(() => {
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL)",
+    );
+    if (
+      !db
+        .prepare("PRAGMA table_info(questions)")
+        .all()
+        .some((c) => c.name === "image_id")
+    )
+      db.exec(
+        "ALTER TABLE questions ADD COLUMN image_id TEXT REFERENCES images(id)",
+      );
+    db.exec("PRAGMA user_version=3");
+  });
+}
+function validateImage(image) {
+  if (image == null) return null;
+  if (typeof image === "string" && /^[a-f0-9]{64}$/.test(image)) {
+    if (!db.prepare("SELECT id FROM images WHERE id=?").get(image))
+      throw Error("画像が見つかりません。選び直してください");
+    return { id: image };
+  }
+  const match =
+    typeof image?.data_url === "string" &&
+    image.data_url.match(
+      /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/,
+    );
+  if (!match) throw Error("画像は PNG・JPEG・WebP を選んでください");
+  const data = Buffer.from(match[2], "base64"),
+    mime = match[1];
+  if (
+    !data.length ||
+    data.length > 5 * 1024 * 1024 ||
+    data.toString("base64") !== match[2]
+  )
+    throw Error("画像は5MB以下の正しい画像ファイルを指定してください");
+  const png =
+    data.length >= 33 &&
+    data
+      .subarray(0, 8)
+      .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) &&
+    data.toString("ascii", 12, 16) === "IHDR";
+  const jpeg =
+    data.length >= 4 &&
+    data[0] === 255 &&
+    data[1] === 216 &&
+    data[2] === 255 &&
+    data.at(-2) === 255 &&
+    data.at(-1) === 217;
+  const webp =
+    data.length >= 20 &&
+    data.toString("ascii", 0, 4) === "RIFF" &&
+    data.toString("ascii", 8, 12) === "WEBP" &&
+    data.readUInt32LE(4) === data.length - 8;
+  if (!{ "image/png": png, "image/jpeg": jpeg, "image/webp": webp }[mime])
+    throw Error("画像の内容と形式が一致しません");
+  return { id: createHash("sha256").update(data).digest("hex"), mime, data };
+}
+function saveImage(image) {
+  if (image?.data)
+    db.prepare("INSERT OR IGNORE INTO images(id,mime,data) VALUES(?,?,?)").run(
+      image.id,
+      image.mime,
+      image.data,
+    );
 }
 const collections = () =>
   db.prepare("SELECT * FROM collections ORDER BY kind,name,id").all();
@@ -229,15 +305,20 @@ function validateQuestion(q) {
       (q.tags || []).map((t) => text(t, "タグ", 50).normalize("NFKC")),
     ),
   ];
-  return [
-    title,
-    db.prepare("SELECT name FROM collections WHERE id=?").get(q.deck_id).name,
-    JSON.stringify(options),
-    q.answer,
-    q.explanation || "",
-    q.deck_id,
-    JSON.stringify(tags),
-  ];
+  const image = validateImage(q.image);
+  return {
+    image,
+    args: [
+      title,
+      db.prepare("SELECT name FROM collections WHERE id=?").get(q.deck_id).name,
+      JSON.stringify(options),
+      q.answer,
+      q.explanation || "",
+      q.deck_id,
+      JSON.stringify(tags),
+      image?.id || null,
+    ],
+  };
 }
 const send = (res, status, value) => {
   res.writeHead(status, {
@@ -247,14 +328,15 @@ const send = (res, status, value) => {
   res.end(JSON.stringify(value));
 };
 async function body(req) {
-  let value = "";
+  const chunks = [];
+  let size = 0;
   for await (const chunk of req) {
-    value += chunk;
-    if (Buffer.byteLength(value) > 1_000_000)
-      throw Error("送信データが大きすぎます");
+    size += chunk.length;
+    if (size > 8_000_000) throw Error("送信データが大きすぎます");
+    chunks.push(chunk);
   }
   try {
-    return JSON.parse(value);
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     throw Error("JSON の形式が正しくありません");
   }
@@ -268,6 +350,19 @@ export const server = http.createServer(async (req, res) => {
       req.headers.origin !== `http://${req.headers.host}`
     )
       return send(res, 403, { error: "許可されていないアクセスです" });
+    const imageMatch = url.pathname.match(/^\/api\/images\/([a-f0-9]{64})$/);
+    if (imageMatch && req.method === "GET") {
+      const image = db
+        .prepare("SELECT mime,data FROM images WHERE id=?")
+        .get(imageMatch[1]);
+      if (!image) return send(res, 404, { error: "画像が見つかりません" });
+      res.writeHead(200, {
+        "Content-Type": image.mime,
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=31536000, immutable",
+      });
+      return res.end(image.data);
+    }
     if (url.pathname === "/api/collections" && req.method === "GET")
       return send(res, 200, collectionStats());
     if (url.pathname === "/api/collections" && req.method === "POST") {
@@ -312,11 +407,12 @@ export const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/questions" && req.method === "GET")
       return send(res, 200, allQuestions());
     if (url.pathname === "/api/questions" && req.method === "POST") {
-      const args = validateQuestion(await body(req));
+      const { args, image } = validateQuestion(await body(req));
       const id = transaction(() => {
+        saveImage(image);
         const r = db
           .prepare(
-            "INSERT INTO questions(title,category,options,answer,explanation,deck_id,tags) VALUES(?,?,?,?,?,?,?)",
+            "INSERT INTO questions(title,category,options,answer,explanation,deck_id,tags,image_id) VALUES(?,?,?,?,?,?,?,?)",
           )
           .run(...args);
         JSON.parse(args[6]).forEach((t) =>
@@ -346,15 +442,20 @@ export const server = http.createServer(async (req, res) => {
       if (req.method === "DELETE")
         db.prepare("DELETE FROM questions WHERE id=?").run(match[1]);
       else {
-        const args = validateQuestion(await body(req));
+        const { args, image } = validateQuestion({
+          image: current.image_id,
+          ...(await body(req)),
+        });
         transaction(() => {
+          saveImage(image);
           // Changing the answer content invalidates learning progress; moving/tagging does not.
           const changed =
             current.title !== args[0] ||
             JSON.stringify(current.options) !== args[2] ||
-            current.answer !== args[3];
+            current.answer !== args[3] ||
+            current.image_id !== args[7];
           db.prepare(
-            "UPDATE questions SET title=?,category=?,options=?,answer=?,explanation=?,deck_id=?,tags=? WHERE id=?",
+            "UPDATE questions SET title=?,category=?,options=?,answer=?,explanation=?,deck_id=?,tags=?,image_id=? WHERE id=?",
           ).run(...args, match[1]);
           if (changed)
             db.prepare(
@@ -465,7 +566,7 @@ export const server = http.createServer(async (req, res) => {
       "Content-Type": `${asset[1]}; charset=utf-8`,
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy":
-        "default-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'",
+        "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'",
     });
     res.end(readFileSync(join(root, "public", asset[0])));
   } catch (error) {
