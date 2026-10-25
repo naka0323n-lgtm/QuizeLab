@@ -2,7 +2,7 @@ const { chromium } = require("playwright");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const os = require("node:os");
-const { mkdtempSync, rmSync } = require("node:fs");
+const { mkdtempSync, rmSync, readFileSync } = require("node:fs");
 const assert = require("node:assert/strict");
 (async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "quizelab-ui-"));
@@ -57,13 +57,11 @@ const assert = require("node:assert/strict");
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII=",
       "base64",
     );
-    await page
-      .locator("#question-image-file")
-      .setInputFiles({
-        name: "question.png",
-        mimeType: "image/png",
-        buffer: png,
-      });
+    await page.locator("#question-image-file").setInputFiles({
+      name: "question.png",
+      mimeType: "image/png",
+      buffer: png,
+    });
     await page.waitForFunction(
       () => document.querySelector("#image-preview img")?.naturalWidth > 0,
     );
@@ -121,13 +119,57 @@ const assert = require("node:assert/strict");
       path: dir + "/quizelab-v2-mastered.png",
       fullPage: true,
     });
+    const sourceDeckId = await page
+      .locator(".tree-row.active .tree-name")
+      .getAttribute("data-node");
+    await page.locator("#share-deck").click();
+    const downloadReady = page.waitForEvent("download");
+    await page.locator("#save-share").click();
+    const download = await downloadReady;
+    assert.match(download.suggestedFilename(), /\.quizelab$/);
+    const sharedPath = path.join(dir, "shared.quizelab");
+    await download.saveAs(sharedPath);
+    const packet = JSON.parse(readFileSync(sharedPath, "utf8"));
+    assert.equal(packet.images.length, 1);
+    assert.equal(packet.questions.length, 2);
+    assert.equal(packet.questions[0].correct_count, undefined);
+    await page.locator("dialog [data-close]").click();
+    await page.locator("#shared-file").setInputFiles(sharedPath);
+    await page.locator("#import-form").waitFor();
+    await page.locator("#import-form [data-close]").first().click();
+    assert.equal(await page.locator("[data-node]").count(), 2);
+    const dropped = await page.evaluateHandle((packet) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(
+        new File([JSON.stringify(packet)], "shared.quizelab", {
+          type: "application/json",
+        }),
+      );
+      return transfer;
+    }, packet);
+    await page.dispatchEvent("body", "drop", { dataTransfer: dropped });
+    await dropped.dispose();
+    await page
+      .getByRole("button", { name: "問題集を追加する", exact: true })
+      .click();
+    await page.locator("dialog").waitFor({ state: "detached" });
+    await page
+      .getByRole("heading", { name: "テクノロジ (2)", exact: true })
+      .waitFor();
+    assert.equal(await page.locator(".question-row").count(), 2);
+    assert.match(
+      await page.locator(".question-row").first().innerText(),
+      /正解 0 回/,
+    );
+    await page.locator(`[data-node="${sourceDeckId}"]`).click();
+    await page.locator("[data-status=mastered]").click();
     await page.locator("[data-edit]").first().click();
     await page.locator("#reset-progress").click();
     await page.locator("dialog").waitFor({ state: "detached" });
     await page.locator(".question-row").first().waitFor();
     assert.equal(await page.locator(".question-row").count(), 1);
     await page.locator("#all-collections").click();
-    await page.locator(".deck-card").waitFor();
+    await page.locator(".deck-card").first().waitFor();
     await page.screenshot({
       path: dir + "/quizelab-v2-overview.png",
       fullPage: true,
@@ -143,7 +185,7 @@ const assert = require("node:assert/strict");
       ),
       false,
     );
-    await page.locator("[data-open]").click();
+    await page.locator(`[data-open="${sourceDeckId}"]`).click();
     assert.equal(
       await page.evaluate(
         () => document.documentElement.scrollWidth > innerWidth,
@@ -152,7 +194,7 @@ const assert = require("node:assert/strict");
     );
     await page.locator("[data-view=history]").click();
     assert.equal(await page.locator(".history-row").count(), 5);
-    await page.locator("[data-node]").last().click();
+    await page.locator(`[data-node="${sourceDeckId}"]`).click();
     await page.locator("[data-status=all]").click();
     const row = page
       .locator(".question-row")

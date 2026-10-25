@@ -94,7 +94,7 @@ function tree(parent = null, depth = 0) {
 }
 function shell(content) {
   $("#app").innerHTML =
-    `<header class="app-header"><button class="brand" id="brand"><span class="brand-icon">Q</span><span>QuizeLab<small>自分だけの問題集</small></span></button><nav><button data-view="library" class="${view === "library" ? "active" : ""}">▤ 問題集</button><button data-view="history" class="${view === "history" ? "active" : ""}">◷ 学習履歴</button></nav><span class="local-badge">● ローカル保存</span></header><div class="workspace"><main>${content}</main><aside class="collection-sidebar"><div class="rail-heading"><div><span class="eyebrow">MY COLLECTIONS</span><h2>問題集</h2></div><button class="icon-button" id="new-deck-rail" aria-label="問題集を作成">＋</button></div><button class="all-collections ${activeId === null ? "active" : ""}" id="all-collections">▦ すべての問題集 <span>${nodes.filter((n) => n.kind === "deck").length}</span></button><div class="collection-tree">${tree() || '<p class="rail-empty">カテゴリと問題集を作成して<br>学習を始めましょう。</p>'}</div><div class="rail-actions"><button class="secondary" id="new-category">＋ カテゴリを作成</button><button class="secondary" id="new-deck">＋ 問題集を作成</button></div><div class="rail-note"><span class="dot"></span>データはこのパソコンに保存<p>数字は「学習中 / 全問題」です。<br>習得済みの問題も削除せず保管します。</p></div></aside></div>`;
+    `<header class="app-header"><button class="brand" id="brand"><span class="brand-icon">Q</span><span>QuizeLab<small>自分だけの問題集</small></span></button><nav><button data-view="library" class="${view === "library" ? "active" : ""}">▤ 問題集</button><button data-view="history" class="${view === "history" ? "active" : ""}">◷ 学習履歴</button></nav><span class="local-badge">● ローカル保存</span></header><div class="workspace"><main>${content}</main><aside class="collection-sidebar"><div class="rail-heading"><div><span class="eyebrow">MY COLLECTIONS</span><h2>問題集</h2></div><button class="icon-button" id="new-deck-rail" aria-label="問題集を作成">＋</button></div><button class="all-collections ${activeId === null ? "active" : ""}" id="all-collections">▦ すべての問題集 <span>${nodes.filter((n) => n.kind === "deck").length}</span></button><div class="collection-tree">${tree() || '<p class="rail-empty">カテゴリと問題集を作成して<br>学習を始めましょう。</p>'}</div><div class="rail-actions"><button class="secondary import-button" id="import-deck">↓ 問題集を読み込む</button><input type="file" id="shared-file" accept=".quizelab,.json" hidden><button class="secondary" id="new-category">＋ カテゴリを作成</button><button class="secondary" id="new-deck">＋ 問題集を作成</button></div><div class="rail-note"><span class="dot"></span>データはこのパソコンに保存<p>数字は「学習中 / 全問題」です。<br>習得済みの問題も削除せず保管します。</p></div></aside></div>`;
   $("#brand").onclick = () => selectNode(null);
   $("#all-collections").onclick = () => selectNode(null);
   document.querySelectorAll("[data-view]").forEach(
@@ -122,6 +122,12 @@ function shell(content) {
         render();
       }),
   );
+  $("#import-deck").onclick = () => $("#shared-file").click();
+  $("#shared-file").onchange = (event) => {
+    const file = event.target.files[0];
+    if (file) importSharedFile(file);
+    event.target.value = "";
+  };
   $("#new-category").onclick = () => collectionEditor(null, "category");
   $("#new-deck").onclick = $("#new-deck-rail").onclick = () =>
     collectionEditor(null, "deck");
@@ -177,7 +183,7 @@ function renderDeck() {
     : filtered.filter((q) => statusFilter === "mastered" || !q.mastered);
   const mastered = items.filter((q) => q.mastered).length;
   shell(
-    `<section class="page"><div class="eyebrow">QUESTION COLLECTION</div><div class="page-heading"><div><div class="breadcrumb">${esc(pathFor(deck))}</div><h1>${esc(deck.name)}</h1><p>${deck.mastery_mode === "streak" ? "連続" : "累計"} ${deck.mastery_target} 回正解で習得。習得した問題は、通常の出題から外れます。</p></div><div class="heading-actions"><button class="secondary" id="deck-settings">問題集の設定</button><button class="primary" id="create">＋ 問題を追加</button></div></div>${statsHTML(items)}<section class="study-banner"><div><span class="eyebrow">PRACTICE SESSION</span><h2>${selected.size ? selected.size + " 問を選択中" : statusFilter === "mastered" ? "習得済みの問題を復習" : "今日も、ひとつずつ習得する。"}</h2><p>${eligible.length} 問が出題対象${statusFilter === "all" && !selected.size ? "（習得済みを除外）" : ""} · 問題を選ばずに、そのまま始められます。</p></div><div class="study-controls"><label>出題数<select id="question-limit">${[
+    `<section class="page"><div class="eyebrow">QUESTION COLLECTION</div><div class="page-heading"><div><div class="breadcrumb">${esc(pathFor(deck))}</div><h1>${esc(deck.name)}</h1><p>${deck.mastery_mode === "streak" ? "連続" : "累計"} ${deck.mastery_target} 回正解で習得。習得した問題は、通常の出題から外れます。</p></div><div class="heading-actions"><button class="secondary" id="share-deck">↗ 共有</button><button class="secondary" id="deck-settings">問題集の設定</button><button class="primary" id="create">＋ 問題を追加</button></div></div>${statsHTML(items)}<section class="study-banner"><div><span class="eyebrow">PRACTICE SESSION</span><h2>${selected.size ? selected.size + " 問を選択中" : statusFilter === "mastered" ? "習得済みの問題を復習" : "今日も、ひとつずつ習得する。"}</h2><p>${eligible.length} 問が出題対象${statusFilter === "all" && !selected.size ? "（習得済みを除外）" : ""} · 問題を選ばずに、そのまま始められます。</p></div><div class="study-controls"><label>出題数<select id="question-limit">${[
       [10, "10 問まで"],
       [20, "20 問まで"],
       [50, "50 問まで"],
@@ -204,6 +210,7 @@ function renderDeck() {
   );
   $("#create").onclick = () => editor();
   if ($("#first")) $("#first").onclick = () => editor();
+  $("#share-deck").onclick = () => shareDeck(deck);
   $("#deck-settings").onclick = () => collectionEditor(deck);
   $("#search").oninput = (e) => {
     const position = e.target.selectionStart;
@@ -281,6 +288,122 @@ function modal(contents) {
   };
   return { dialog, close };
 }
+function shareDeck(deck) {
+  const items = questions.filter((q) => q.deck_id === deck.id);
+  const { dialog } = modal(
+    `<div class="modal-heading"><div><span class="eyebrow">SHARE A QUESTION COLLECTION</span><h2>問題集を共有</h2></div><button type="button" class="icon-button" data-close aria-label="閉じる">×</button></div><div class="share-deck-title">▤ ${esc(deck.name)}<span>${items.length} 問・${new Set(items.map((q) => q.image_id).filter(Boolean)).size} 枚の画像</span></div><ol class="share-steps"><li><b>共有用ファイルを保存</b><p>問題文・選択肢・正解・解説・タグ・画像を1つにまとめます。習得済みも含めた全問題が対象です。</p></li><li><b>ファイルを相手に渡す</b><p>LINE・メール・USBなど、普段の方法で送れます。アップロードや送信はこのアプリでは行いません。</p></li><li><b>相手が「問題集を読み込む」</b><p>相手にも QuizeLab 1.3.0 以降が必要です。ファイルを選ぶと、学習を最初から始められます。</p></li></ol><div class="share-note">あなたの学習履歴・正解回数は含めません。<br>正解と解説も含む、編集できる問題集のコピーです。</div><p id="share-error" role="alert"></p><div class="modal-footer"><span>1ファイル 50MB・2000問まで</span><button type="button" class="primary" id="save-share">↓ 共有用ファイルを保存</button></div>`,
+  );
+  $("#save-share").onclick = async () => {
+    const button = $("#save-share");
+    button.disabled = true;
+    button.textContent = "ファイルを作成中…";
+    try {
+      const response = await fetch(`/api/collections/${deck.id}/export`);
+      if (!response.ok) throw Error((await response.json()).error);
+      const blob = await response.blob(),
+        url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download =
+        deck.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 80) +
+        ".quizelab";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      toast("保存できたら、.quizelab ファイルを相手に渡してください");
+    } catch (error) {
+      if (dialog.isConnected) $("#share-error").textContent = error.message;
+    } finally {
+      if (dialog.isConnected) {
+        button.disabled = false;
+        button.textContent = "↓ 共有用ファイルを保存";
+      }
+    }
+  };
+}
+async function importSharedFile(file) {
+  if (exam || result)
+    return toast("テストを終了し、問題集の画面に戻ってから読み込んでください");
+  if (document.querySelector("dialog"))
+    return toast("編集中の画面を閉じてから読み込んでください");
+  if (!file.size || file.size > 50 * 1024 * 1024)
+    return toast("共有ファイルは50MB以下のものを選んでください");
+  try {
+    let packet;
+    try {
+      packet = JSON.parse(await file.text());
+    } catch {
+      throw Error(
+        "共有ファイルを読み取れません。相手に .quizelab ファイルを確認してください",
+      );
+    }
+    const parent =
+      activeNode()?.kind === "category"
+        ? activeId
+        : (activeNode()?.parent_id ?? null);
+    const preview = await api("share/preview", "POST", {
+      package: packet,
+      parent_id: parent,
+    });
+    const { dialog, close } = modal(
+      `<form id="import-form"><div class="modal-heading"><div><span class="eyebrow">IMPORT A QUESTION COLLECTION</span><h2>問題集を読み込む</h2></div><button type="button" class="icon-button" data-close aria-label="閉じる">×</button></div><div class="share-summary"><strong>${preview.question_count}<small>問</small></strong><span>画像 ${preview.image_count} 枚 · タグ ${preview.tag_count} 個</span></div><label class="field">問題集の名前<input name="name" required maxlength="100" value="${esc(preview.name)}"></label><label class="field">保存先カテゴリ<select name="parent"><option value="">なし（いちばん上）</option>${nodes
+        .filter((n) => n.kind === "category")
+        .map(
+          (n) =>
+            `<option value="${n.id}" ${n.id === parent ? "selected" : ""}>${esc(pathFor(n))}</option>`,
+        )
+        .join(
+          "",
+        )}</select></label><div class="share-preview"><b>含まれる問題</b>${preview.titles.map((t) => `<p>${esc(t)}</p>`).join("") || "<p>まだ問題のない問題集です。</p>"}${preview.question_count > 3 ? "<small>ほか " + (preview.question_count - 3) + " 問</small>" : ""}</div><div class="share-note">新しい問題集として追加します。既存の問題集や履歴は上書きしません。同名の場合は末尾に番号を付けます。<br>学習回数は0から開始し、${preview.mastery_mode === "streak" ? "連続" : "累計"}${preview.mastery_target}回正解で習得します。</div><p id="import-error" role="alert"></p><div class="modal-footer"><span></span><div><button type="button" class="secondary" data-close>キャンセル</button><button type="submit" class="primary">問題集を追加する</button></div></div></form>`,
+    );
+    $("#import-form").onsubmit = async (event) => {
+      event.preventDefault();
+      const form = event.target,
+        button = form.querySelector("[type=submit]");
+      button.disabled = true;
+      button.textContent = "読み込み中…";
+      try {
+        const saved = await api("share/import", "POST", {
+          package: packet,
+          name: form.elements.name.value,
+          parent_id: form.elements.parent.value
+            ? +form.elements.parent.value
+            : null,
+        });
+        close();
+        activeId = saved.id;
+        view = "library";
+        resetFilters();
+        try {
+          await load();
+          render();
+          toast(saved.name + " を追加しました");
+        } catch {
+          toast("問題集は追加済みです。画面を開き直してください");
+        }
+      } catch (error) {
+        if (dialog.isConnected) {
+          $("#import-error").textContent = error.message;
+          button.disabled = false;
+          button.textContent = "問題集を追加する";
+        }
+      }
+    };
+  } catch (error) {
+    toast(error.message);
+  }
+}
+document.addEventListener("dragover", (event) => {
+  if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+});
+document.addEventListener("drop", (event) => {
+  if (!event.dataTransfer?.files.length) return;
+  event.preventDefault();
+  if (event.dataTransfer.files.length !== 1)
+    return toast("共有ファイルを1つずつ読み込んでください");
+  importSharedFile(event.dataTransfer.files[0]);
+});
 function collectionEditor(node, kind = "deck") {
   kind = node?.kind || kind;
   const label = kind === "deck" ? "問題集" : "カテゴリ";

@@ -476,3 +476,194 @@ test("v1.1 の習得済みデータを画像対応へ移行しても学習回数
   PRAGMA user_version=2;`);
     },
   ));
+
+test("問題集を別ユーザーへ共有：画像・タグ・正解を再現し、学習履歴は移さない", () =>
+  withServer(async (source, filename, base) => {
+    const id = (
+      await source("collections", "POST", {
+        name: "共有テクノロジ",
+        kind: "deck",
+        mastery_target: 5,
+        mastery_mode: "total",
+      })
+    ).value.id;
+    const q = {
+      deck_id: id,
+      title: "画像付きの問題",
+      options: ["正解", "不正解"],
+      answer: 0,
+      tags: ["ネットワーク", "重要"],
+      explanation: "共有する解説",
+      image: { data_url: "data:image/png;base64," + imagePNG },
+    };
+    const qid = (await source("questions", "POST", q)).value.id;
+    for (let i = 0; i < 5; i++)
+      await source("attempts", "POST", { ids: [qid], answers: [0] });
+    const response = await fetch(base + "/api/collections/" + id + "/export");
+    assert.equal(response.status, 200);
+    assert.match(
+      response.headers.get("content-disposition"),
+      /attachment;.*quizelab/,
+    );
+    const packet = await response.json();
+    assert.equal(packet.format, "quizelab-deck");
+    assert.equal(packet.questions.length, 1);
+    assert.equal(packet.images.length, 1);
+    assert.equal(packet.questions[0].image, packet.images[0].id);
+    assert.deepEqual(
+      Object.keys(packet.questions[0]).sort(),
+      ["title", "options", "answer", "explanation", "tags", "image"].sort(),
+    );
+    assert.equal(packet.attempts, undefined);
+    assert.equal(packet.questions[0].correct_count, undefined);
+    await withServer(async (target, filename, base) => {
+      const parent = (
+        await target("collections", "POST", {
+          name: "受け取った問題集",
+          kind: "category",
+        })
+      ).value.id;
+      const original = (
+        await target("collections", "POST", {
+          name: packet.deck.name,
+          kind: "deck",
+          parent_id: parent,
+        })
+      ).value.id;
+      const ownQ = (
+        await target("questions", "POST", {
+          ...q,
+          deck_id: original,
+          image: null,
+          title: "自分の問題",
+        })
+      ).value.id;
+      await target("attempts", "POST", { ids: [ownQ], answers: [0] });
+      const preview = await target("share/preview", "POST", {
+        package: packet,
+        parent_id: parent,
+      });
+      assert.equal(preview.status, 200);
+      assert.equal(preview.value.question_count, 1);
+      assert.equal(preview.value.image_count, 1);
+      assert.equal(preview.value.name, packet.deck.name + " (2)");
+      assert.equal((await target("collections")).value.length, 2);
+      const invalid = structuredClone(packet);
+      invalid.questions.push({ ...packet.questions[0], title: "" });
+      assert.equal(
+        (
+          await target("share/import", "POST", {
+            package: invalid,
+            parent_id: parent,
+          })
+        ).status,
+        400,
+      );
+      assert.equal((await target("collections")).value.length, 2);
+      const missing = structuredClone(packet);
+      missing.images = [];
+      assert.equal(
+        (await target("share/import", "POST", { package: missing })).status,
+        400,
+      );
+      const wrongVersion = { ...packet, version: 99 };
+      assert.equal(
+        (await target("share/import", "POST", { package: wrongVersion }))
+          .status,
+        400,
+      );
+      const wrongImage = structuredClone(packet);
+      wrongImage.images[0].id = "0".repeat(64);
+      assert.equal(
+        (await target("share/import", "POST", { package: wrongImage })).status,
+        400,
+      );
+      assert.equal(
+        (
+          await target("share/import", "POST", {
+            package: packet,
+            parent_id: original,
+          })
+        ).status,
+        400,
+      );
+      const before = new DatabaseSync(filename);
+      assert.equal(before.prepare("SELECT count(*) n FROM images").get().n, 0);
+      before.close();
+      const malicious = structuredClone(packet);
+      malicious.questions[0].correct_count = 99;
+      malicious.questions[0].answer_count = 100;
+      const result = await target("share/import", "POST", {
+        package: malicious,
+        parent_id: parent,
+      });
+      assert.equal(result.status, 201);
+      assert.equal(result.value.name, packet.deck.name + " (2)");
+      const imported = (await target("questions")).value.find(
+        (q) => q.deck_id === result.value.id,
+      );
+      assert.equal(imported.title, q.title);
+      assert.deepEqual(imported.tags, q.tags);
+      assert.deepEqual(imported.options, q.options);
+      assert.equal(imported.answer, q.answer);
+      assert.equal(imported.explanation, q.explanation);
+      assert.equal(imported.correct_count, 0);
+      assert.equal(imported.answer_count, 0);
+      assert.equal(imported.mastered, false);
+      const image = await fetch(base + "/api/images/" + imported.image_id);
+      assert.deepEqual(
+        Buffer.from(await image.arrayBuffer()),
+        Buffer.from(imagePNG, "base64"),
+      );
+      assert.equal(
+        (await target("questions")).value.find((q) => q.id === ownQ)
+          .correct_count,
+        1,
+      );
+      assert.equal((await target("attempts")).value.length, 1);
+      const second = await target("share/import", "POST", {
+        package: packet,
+        parent_id: parent,
+      });
+      assert.equal(second.value.name, packet.deck.name + " (3)");
+      const reexport = (
+        await target("collections/" + result.value.id + "/export")
+      ).value;
+      assert.deepEqual(reexport.images, packet.images);
+      assert.deepEqual(reexport.questions, packet.questions);
+      const counts = new DatabaseSync(filename);
+      assert.equal(counts.prepare("SELECT count(*) n FROM images").get().n, 1);
+      counts.close();
+    });
+    assert.equal((await source("questions")).value[0].correct_count, 5);
+  }));
+
+test("共有ファイルの空問題集と不正形式・問題数制限", () =>
+  withServer(async (request) => {
+    const deck = (
+      await request("collections", "POST", { name: "空の問題集", kind: "deck" })
+    ).value.id;
+    const packet = (await request("collections/" + deck + "/export")).value;
+    assert.equal(packet.questions.length, 0);
+    assert.equal(
+      (await request("share/import", "POST", { package: packet })).status,
+      201,
+    );
+    assert.equal(
+      (
+        await request("share/import", "POST", {
+          package: { ...packet, questions: Array(2001).fill({}) },
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await request("share/import", "POST", {
+          package: { format: "another-app", version: 1 },
+        })
+      ).status,
+      400,
+    );
+    assert.equal((await request("collections/999999/export")).status, 400);
+  }));

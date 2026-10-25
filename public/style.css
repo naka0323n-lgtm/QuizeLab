@@ -2104,3 +2104,107 @@ progress {
 .image-viewer h2 {
   font-size: 16px;
 }
+.share-deck-title {
+  background: #edf5ef;
+  padding: 18px;
+  border-radius: 7px;
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.share-deck-title > span {
+  display: block;
+  font-weight: 400;
+  color: #82988a;
+  font-size: 11px;
+  margin-top: 8px;
+}
+.share-steps {
+  padding-left: 23px;
+  margin: 24px 0;
+}
+.share-steps li {
+  padding: 0 0 20px 8px;
+  font-size: 12px;
+  color: #498066;
+}
+.share-steps b {
+  color: #2e4638;
+}
+.share-steps p {
+  font-size: 11px;
+  margin-top: 6px;
+}
+.share-note {
+  background: #f3f7f4;
+  color: #82958a;
+  border-radius: 6px;
+  padding: 14px;
+  font-size: 11px;
+  line-height: 1.9;
+  margin: 18px 0;
+}
+.share-summary {
+  display: flex;
+  align-items: center;
+  gap: 25px;
+  padding: 16px 0;
+}
+.share-summary strong {
+  font-size: 36px;
+  color: var(--green);
+  font-weight: 600;
+}
+.share-summary small {
+  font-size: 12px;
+  margin-left: 8px;
+}
+.share-summary > span {
+  font-size: 12px;
+  color: #8c9d91;
+}
+.share-preview {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  max-height: 190px;
+  overflow: auto;
+}
+.share-preview b {
+  font-size: 11px;
+  color: #789081;
+}
+.share-preview p {
+  font-size: 11px;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+.share-preview > small {
+  font-size: 10px;
+  color: #97a89b;
+}
+.modal-footer > span {
+  font-size: 10px;
+  color: #95a59a;
+}
+#share-error,
+#import-error {
+  color: #b65858;
+  font-size: 11px;
+}
+.rail-actions .import-button {
+  color: #23745e;
+  border-color: #cdded2;
+  background: #f0f6f2;
+}
+@media (max-width: 680px) {
+  .rail-actions {
+    flex-wrap: wrap;
+  }
+  .heading-actions {
+    flex-shrink: 0;
+  }
+  .share-steps {
+    margin-bottom: 12px;
+  }
+}

@@ -44,6 +44,23 @@ function createWindow() {
   window.webContents.session.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false),
   );
+  window.webContents.session.on("will-download", (_event, item, contents) => {
+    if (contents !== window?.webContents) return;
+    const filename = item.getFilename();
+    if (!filename.endsWith(".quizelab")) return;
+    item.setSaveDialogOptions({
+      title: "共有用の問題集を保存",
+      defaultPath: path.join(app.getPath("downloads"), path.basename(filename)),
+      filters: [{ name: "QuizeLab 問題集", extensions: ["quizelab"] }],
+    });
+    item.once("done", (_event, state) => {
+      if (state === "interrupted")
+        dialog.showErrorBox(
+          "保存できませんでした",
+          "空き容量と保存先の書き込み権限を確認し、もう一度お試しください。",
+        );
+    });
+  });
   window.once("ready-to-show", () => window.show());
   window.on("closed", () => {
     window = null;

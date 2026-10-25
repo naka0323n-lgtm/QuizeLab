@@ -280,12 +280,13 @@ function validateCollection(data, id) {
     throw Error("同じ場所に同名のカテゴリ・問題集があります");
   return [name, data.kind, parent, target, mode];
 }
-function validateQuestion(q) {
+function validateQuestion(q, importDeckName) {
   const title = text(q.title, "問題文", 10000);
   if (
-    !Number.isInteger(q.deck_id) ||
-    db.prepare("SELECT kind FROM collections WHERE id=?").get(q.deck_id)
-      ?.kind !== "deck"
+    importDeckName === undefined &&
+    (!Number.isInteger(q.deck_id) ||
+      db.prepare("SELECT kind FROM collections WHERE id=?").get(q.deck_id)
+        ?.kind !== "deck")
   )
     throw Error("保存先の問題集を選んでください");
   if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 6)
@@ -310,7 +311,9 @@ function validateQuestion(q) {
     image,
     args: [
       title,
-      db.prepare("SELECT name FROM collections WHERE id=?").get(q.deck_id).name,
+      importDeckName ??
+        db.prepare("SELECT name FROM collections WHERE id=?").get(q.deck_id)
+          .name,
       JSON.stringify(options),
       q.answer,
       q.explanation || "",
@@ -320,6 +323,118 @@ function validateQuestion(q) {
     ],
   };
 }
+const SHARED_FILE_LIMIT = 50 * 1024 * 1024;
+function parseSharedDeck(packet) {
+  if (!packet || packet.format !== "quizelab-deck" || packet.version !== 1)
+    throw Error("QuizeLab の共有ファイルではないか、未対応のバージョンです");
+  const name = text(packet.deck?.name, "問題集名", 100);
+  const target = packet.deck.mastery_target ?? 5,
+    mode = packet.deck.mastery_mode ?? "total";
+  if (
+    !Number.isInteger(target) ||
+    target < 1 ||
+    target > 20 ||
+    !["total", "streak"].includes(mode)
+  )
+    throw Error("共有ファイルの習得ルールが正しくありません");
+  if (
+    !Array.isArray(packet.questions) ||
+    packet.questions.length > 2000 ||
+    !Array.isArray(packet.images) ||
+    packet.images.length > 2000
+  )
+    throw Error("共有ファイルは1問題集・2000問までです");
+  const images = new Map();
+  for (const entry of packet.images) {
+    const image = validateImage({ data_url: entry?.data_url });
+    if (!image || image.id !== entry.id || images.has(image.id))
+      throw Error("共有ファイルの画像が壊れているか重複しています");
+    images.set(image.id, image);
+  }
+  const used = new Set();
+  const questions = packet.questions.map((q) => {
+    if (!q || typeof q !== "object")
+      throw Error("共有ファイルの問題が正しくありません");
+    const { args } = validateQuestion(
+      { ...q, deck_id: null, image: null },
+      name,
+    );
+    if (q.image != null) {
+      if (typeof q.image !== "string" || !images.has(q.image))
+        throw Error("問題が参照する画像が共有ファイルに含まれていません");
+      args[7] = q.image;
+      used.add(q.image);
+    }
+    return args;
+  });
+  if (used.size !== images.size)
+    throw Error("共有ファイルに未使用の画像が含まれています");
+  return { name, target, mode, questions, images };
+}
+function availableDeckName(name, parent) {
+  let candidate = name,
+    suffix = 2;
+  while (
+    db
+      .prepare("SELECT id FROM collections WHERE name=? AND parent_id IS ?")
+      .get(candidate, parent)
+  ) {
+    const tail = ` (${suffix++})`;
+    candidate = name.slice(0, 100 - tail.length) + tail;
+  }
+  return candidate;
+}
+function sharedDeck(id) {
+  const deck = db
+    .prepare("SELECT * FROM collections WHERE id=? AND kind='deck'")
+    .get(id);
+  if (!deck) throw Error("共有する問題集が見つかりません");
+  const items = db
+    .prepare(questionSQL + " WHERE q.deck_id=? ORDER BY q.id")
+    .all(id)
+    .map(question);
+  if (items.length > 2000)
+    throw Error("1つの共有ファイルは2000問までです。問題集を分けてください");
+  const ids = [...new Set(items.map((q) => q.image_id).filter(Boolean))];
+  const images = [];
+  let size = 0;
+  for (const id of ids) {
+    const image = db.prepare("SELECT mime,data FROM images WHERE id=?").get(id);
+    if (!image)
+      throw Error("画像が見つからないため共有ファイルを作成できません");
+    size += Math.ceil(image.data.length / 3) * 4;
+    if (size > SHARED_FILE_LIMIT)
+      throw Error(
+        "共有ファイルは50MBまでです。画像を小さくするか問題集を分けてください",
+      );
+    images.push({
+      id,
+      data_url: `data:${image.mime};base64,${Buffer.from(image.data).toString("base64")}`,
+    });
+  }
+  const packet = {
+    format: "quizelab-deck",
+    version: 1,
+    deck: {
+      name: deck.name,
+      mastery_target: deck.mastery_target,
+      mastery_mode: deck.mastery_mode,
+    },
+    questions: items.map((q) => ({
+      title: q.title,
+      options: q.options,
+      answer: q.answer,
+      explanation: q.explanation,
+      tags: q.tags,
+      image: q.image_id,
+    })),
+    images,
+  };
+  const data = JSON.stringify(packet);
+  if (Buffer.byteLength(data) > SHARED_FILE_LIMIT)
+    throw Error("共有ファイルは50MBまでです。問題集を分けてください");
+  return { name: deck.name, data };
+}
 const send = (res, status, value) => {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -327,12 +442,12 @@ const send = (res, status, value) => {
   });
   res.end(JSON.stringify(value));
 };
-async function body(req) {
+async function body(req, limit = 8_000_000) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 8_000_000) throw Error("送信データが大きすぎます");
+    if (size > limit) throw Error("送信データが大きすぎます");
     chunks.push(chunk);
   }
   try {
@@ -350,6 +465,84 @@ export const server = http.createServer(async (req, res) => {
       req.headers.origin !== `http://${req.headers.host}`
     )
       return send(res, 403, { error: "許可されていないアクセスです" });
+    const exportMatch = url.pathname.match(
+      /^\/api\/collections\/(\d+)\/export$/,
+    );
+    if (exportMatch && req.method === "GET") {
+      const { name, data } = sharedDeck(+exportMatch[1]);
+      const filename =
+        name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 80) + ".quizelab";
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": `attachment; filename="quizelab-deck.quizelab"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      });
+      return res.end(data);
+    }
+    if (
+      ["/api/share/preview", "/api/share/import"].includes(url.pathname) &&
+      req.method === "POST"
+    ) {
+      const data = await body(req, SHARED_FILE_LIMIT + 16384);
+      if (
+        Buffer.byteLength(JSON.stringify(data.package ?? null)) >
+        SHARED_FILE_LIMIT
+      )
+        throw Error("共有ファイルは50MBまでです");
+      const shared = parseSharedDeck(data.package);
+      const parent = data.parent_id ?? null;
+      const name = availableDeckName(
+        data.name === undefined
+          ? shared.name
+          : text(data.name, "問題集名", 100),
+        parent,
+      );
+      const args = validateCollection({
+        name,
+        kind: "deck",
+        parent_id: parent,
+        mastery_target: shared.target,
+        mastery_mode: shared.mode,
+      });
+      if (url.pathname.endsWith("preview"))
+        return send(res, 200, {
+          name,
+          question_count: shared.questions.length,
+          image_count: shared.images.size,
+          tag_count: new Set(shared.questions.flatMap((q) => JSON.parse(q[6])))
+            .size,
+          mastery_target: shared.target,
+          mastery_mode: shared.mode,
+          titles: shared.questions.slice(0, 3).map((q) => q[0]),
+        });
+      const id = transaction(() => {
+        const id = Number(
+          db
+            .prepare(
+              "INSERT INTO collections(name,kind,parent_id,mastery_target,mastery_mode) VALUES(?,?,?,?,?)",
+            )
+            .run(...args).lastInsertRowid,
+        );
+        for (const image of shared.images.values()) saveImage(image);
+        const insert = db.prepare(
+          "INSERT INTO questions(title,category,options,answer,explanation,deck_id,tags,image_id) VALUES(?,?,?,?,?,?,?,?)",
+        );
+        for (const source of shared.questions) {
+          const row = [...source];
+          row[5] = id;
+          insert.run(...row);
+          for (const tag of JSON.parse(row[6]))
+            db.prepare("INSERT OR IGNORE INTO tags(name) VALUES(?)").run(tag);
+        }
+        return id;
+      });
+      return send(res, 201, {
+        id,
+        name,
+        question_count: shared.questions.length,
+      });
+    }
     const imageMatch = url.pathname.match(/^\/api\/images\/([a-f0-9]{64})$/);
     if (imageMatch && req.method === "GET") {
       const image = db
