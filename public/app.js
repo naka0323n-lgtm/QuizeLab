@@ -693,6 +693,7 @@ function startExam(items) {
     items,
     answers: items.map(() => null),
     flags: [],
+    revealed: items.map(() => false),
     index: 0,
     started: Date.now(),
     key: crypto.randomUUID(),
@@ -712,12 +713,14 @@ function updateClock() {
 function renderExam() {
   const q = exam.items[exam.index],
     answered = exam.answers.filter((a) => a !== null).length;
+  const revealed = exam.revealed[exam.index];
   $("#app").innerHTML =
-    `<div class="exam"><header class="exam-header"><span class="exam-brand">Q <b>QuizeLab</b><small>確認テスト</small></span><span>経過時間 <b id="clock">00:00</b></span><button class="secondary" id="quit">テストを中断</button></header><div class="exam-layout"><section class="exam-paper"><div class="exam-meta"><span>問 ${exam.index + 1} <small>/ ${exam.items.length}</small></span><span>${esc(q.category)}</span></div><h1 class="exam-question">${esc(q.title)}</h1>${questionImage(q)}<p class="answer-instruction">最も適切なものを1つ選んでください。</p><div class="exam-options">${q.options.map((o, i) => `<label class="exam-option ${exam.answers[exam.index] === i ? "chosen" : ""}"><input type="radio" name="exam-answer" value="${i}" ${exam.answers[exam.index] === i ? "checked" : ""}><span>${letters[i]}</span><div>${esc(o)}</div></label>`).join("")}</div><div class="exam-controls"><button class="secondary" id="prev" ${exam.index === 0 ? "disabled" : ""}>← 前の問題</button><button class="text-button" id="flag">${exam.flags.includes(exam.index) ? "◆ 見直しを解除" : "◇ あとで見直す"}</button><button class="primary" id="next">${exam.index === exam.items.length - 1 ? "解答を提出" : "次の問題 →"}</button></div></section><aside class="exam-nav"><h3>解答状況</h3><p>${answered} / ${exam.items.length} 問 解答済み</p><progress value="${answered}" max="${exam.items.length}"></progress><div class="number-grid">${exam.items.map((_, i) => `<button data-jump="${i}" class="${i === exam.index ? "current" : ""} ${exam.answers[i] !== null ? "answered" : ""}">${i + 1}${exam.flags.includes(i) ? "<sup>◆</sup>" : ""}</button>`).join("")}</div><small>◆ あとで見直す問題</small><button id="submit" class="secondary">テストを終了・採点</button><p class="muted">解答は提出するまで変更できます。未解答の問題は不正解になります。</p><p id="exam-error" role="alert"></p></aside></div></div>`;
+    `<div class="exam"><header class="exam-header"><span class="exam-brand">Q <b>QuizeLab</b><small>確認テスト</small></span><span>経過時間 <b id="clock">00:00</b></span><button class="secondary" id="quit">テストを中断</button></header><div class="exam-layout"><section class="exam-paper"><div class="exam-meta"><span>問 ${exam.index + 1} <small>/ ${exam.items.length}</small></span><span>${esc(q.category)}</span></div><h1 class="exam-question">${esc(q.title)}</h1>${questionImage(q)}<p class="answer-instruction">最も適切なものを1つ選んでください。</p><div class="exam-options">${q.options.map((o, i) => `<label class="exam-option ${exam.answers[exam.index] === i ? "chosen" : ""}"><input type="radio" name="exam-answer" value="${i}" ${revealed ? "disabled" : ""} ${exam.answers[exam.index] === i ? "checked" : ""}><span>${letters[i]}</span><div>${esc(o)}</div></label>`).join("")}</div><div class="answer-check"><button type="button" class="secondary" id="show-answer" ${exam.answers[exam.index] === null || revealed ? "disabled" : ""} aria-controls="answer-feedback" aria-expanded="${revealed}">${revealed ? "正解を表示済み" : "正解・解説を見る"}</button><span>${revealed ? "確認後は解答を変更できません。" : "解答を選んでから確認できます。"}</span></div>${revealed ? `<section id="answer-feedback" class="answer-feedback" role="status"><strong class="${exam.answers[exam.index] === q.answer ? "correct" : "incorrect"}">${exam.answers[exam.index] === q.answer ? "✓ 正解です" : "× 不正解です"}</strong><p class="correct-answer"><b>正解：${letters[q.answer]}</b> ${esc(q.options[q.answer])}</p><div class="explanation"><b>解説</b><p>${esc(q.explanation || "解説はまだ登録されていません。")}</p></div><small>学習記録は「テストを終了・採点」で保存されます。</small></section>` : ""}<div class="exam-controls"><button class="secondary" id="prev" ${exam.index === 0 ? "disabled" : ""}>← 前の問題</button><button class="text-button" id="flag">${exam.flags.includes(exam.index) ? "◆ 見直しを解除" : "◇ あとで見直す"}</button><button class="primary" id="next">${exam.index === exam.items.length - 1 ? "解答を提出" : "次の問題 →"}</button></div></section><aside class="exam-nav"><h3>解答状況</h3><p>${answered} / ${exam.items.length} 問 解答済み</p><progress value="${answered}" max="${exam.items.length}"></progress><div class="number-grid">${exam.items.map((_, i) => `<button data-jump="${i}" class="${i === exam.index ? "current" : ""} ${exam.answers[i] !== null ? "answered" : ""}">${i + 1}${exam.flags.includes(i) ? "<sup>◆</sup>" : ""}</button>`).join("")}</div><small>◆ あとで見直す問題</small><button id="submit" class="secondary">テストを終了・採点</button><p class="muted">正解を確認する前なら解答を変更できます。未解答の問題は不正解になります。</p><p id="exam-error" role="alert"></p></aside></div></div>`;
   updateClock();
   document.querySelectorAll('[name="exam-answer"]').forEach(
     (r) =>
       (r.onchange = () => {
+        if (exam.revealed[exam.index]) return;
         exam.answers[exam.index] = +r.value;
         renderExam();
       }),
@@ -739,6 +742,11 @@ function renderExam() {
       exam.index++;
       renderExam();
     }
+  };
+  $("#show-answer").onclick = () => {
+    if (exam.answers[exam.index] === null || exam.revealed[exam.index]) return;
+    exam.revealed[exam.index] = true;
+    renderExam();
   };
   $("#submit").onclick = submit;
   $("#flag").onclick = () => {
