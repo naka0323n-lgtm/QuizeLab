@@ -89,16 +89,7 @@ const assert = require("node:assert/strict");
     });
     for (let round = 0; round < 5; round++) {
       await page.locator("#start").click();
-      assert.equal(await page.locator("#show-answer").isDisabled(), true);
-      assert.equal(await page.locator("#answer-feedback").count(), 0);
       await page.locator(".exam-option").first().click();
-      await page.locator("#show-answer").click();
-      assert.match(await page.locator("#answer-feedback").innerText(), /正解です/);
-      assert.equal(await page.locator('[name="exam-answer"]').first().isDisabled(), true);
-      await page.locator("#next").click();
-      await page.locator("#prev").click();
-      assert.equal(await page.locator("#show-answer").isDisabled(), true);
-      await page.locator("#answer-feedback").waitFor();
       await page.locator("#next").click();
       await page.locator(".exam-option").first().click();
       await page.locator("#submit").click();
@@ -216,15 +207,6 @@ const assert = require("node:assert/strict");
     await row.locator("[data-edit]").click();
     assert.equal(await page.locator("#image-preview img").count(), 0);
     await page.locator("dialog [data-close]").first().click();
-    await page.locator("#start").click();
-    await page.locator(".exam-option").last().click();
-    const chosenWrong=await page.locator('[name="exam-answer"]:checked').inputValue();
-    await page.locator("#show-answer").click();
-    assert.match(await page.locator("#answer-feedback").innerText(), /不正解です/);
-    assert.match(await page.locator("#answer-feedback").innerText(), /正解：ア/);
-    assert.equal(await page.locator('[name="exam-answer"]:checked').inputValue(),chosenWrong);
-    assert.equal(await page.locator('[name="exam-answer"]').first().isDisabled(),true);
-    await page.locator("#quit").click();
     assert.deepEqual(errors, []);
     console.log(
       "PASS UI: hierarchical decks, click-to-reuse tags, selection settings, five rounds, mastery exclusion/review/reset, deck stats, history, mobile",

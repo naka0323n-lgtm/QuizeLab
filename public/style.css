@@ -2208,4 +2208,3 @@ progress {
     margin-bottom: 12px;
   }
 }
-.answer-check{display:flex;align-items:center;gap:14px;margin-top:22px;flex-wrap:wrap}.answer-check>span{font-size:10px;color:#8a9b90}.answer-feedback{margin-top:20px;padding:22px;background:#f4f8f5;border:1px solid #d9e5dd;border-radius:6px}.answer-feedback>strong{font-size:14px}.answer-feedback .correct-answer{font-size:13px;color:#3e5746;margin-top:14px;white-space:pre-wrap;overflow-wrap:anywhere}.answer-feedback>small{display:block;font-size:10px;color:#8a9b90;margin-top:18px}
